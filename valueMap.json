@@ -1,0 +1,15 @@
+{
+  "Your Name": "John Smith",
+  "Street Address": "123 Sakura Street",
+  "City, ST Zip Code": "Minato-ku, Tokyo 105-0011",
+  "Telephone": "+81-90-1234-5678",
+  "Email": "john.smith@example.com",
+  "Date": "March 15, 2026",
+  "Recipient Name": "Ms. Yuki Tanaka",
+  "Title": "Hiring Manager",
+  "Company": "ABC Technologies Inc.",
+  "If you’re ready to write, select a line or paragraph of tip text and start typing to replace it with your own. Don’t include space to the right of the characters in your selection.":
+    "I am writing to express my interest in the Software Engineer position at your company.",
+  "It’s easy to match any of the text formatting you see here. On the Home tab of the ribbon, check out the Styles gallery for all styles used in this letter.":
+    "With over five years of experience in backend and cloud-native development, I believe my skills align well with your team’s needs."
+}

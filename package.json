@@ -1,0 +1,19 @@
+{
+  "name": "word-replacement",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "generateDocxWithLLM.js",
+  "scripts": {
+    "smoke": "node scripts/smoke-import.js",
+    "run:example": "node scripts/run-example.js",
+    "test": "npm run smoke"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "openai": "^4.73.1",
+    "pizzip": "^3.1.5"
+  }
+}
