@@ -2,6 +2,7 @@ import "dotenv/config";
 import fs from "fs";
 import PizZip from "pizzip";
 import OpenAI from "openai";
+import { DefaultAzureCredential, getBearerTokenProvider } from "@azure/identity";
 
 /* ======================================================
  * MAIN ENTRY
@@ -15,7 +16,7 @@ import OpenAI from "openai";
  *   - provided key-value data
  *
  * @param {string} filePath - Path to Word template (.docx)
- * @param {Record<string, string>} valueMap - Extracted data
+ * @param {Record<string, string> | string} valueMap - Extracted data map or raw text
  * @param {"openai" | "azure"} provider - LLM provider
  * @returns {Promise<Buffer>} - Generated docx buffer
  */
@@ -45,23 +46,24 @@ export async function generateDocxWithLLM(
   // 3. Extract plain text for context
   const plainText = stripXml(xml);
 
-  // 4. Resolve each placeholder via LLM
-  const resolved = {};
-
-  for (const ph of placeholders) {
+  // 4. Resolve all placeholders via a single LLM call
+  const placeholderContext = placeholders.map((ph) => {
     const marker = `[${ph.id}]`;
-    const sentence = extractSentence(plainText, marker);
-
-    const prompt = buildPrompt({
-      placeholderName: ph.raw,
+    return {
+      id: ph.id,
+      raw: ph.raw,
       marker,
-      sentence,
-      valueMap,
-    });
+      sentence: extractSentence(plainText, marker),
+    };
+  });
 
-    const value = await callLLM(prompt, provider);
-    resolved[ph.id] = value;
-  }
+  const batchPrompt = buildBatchPrompt({
+    placeholders: placeholderContext,
+    valueMap,
+  });
+
+  const batchResponse = await callLLM(batchPrompt, provider);
+  const resolved = parseBatchResponse(batchResponse, placeholderContext);
 
   // 5. Replace placeholders with LLM output
   for (const [id, value] of Object.entries(resolved)) {
@@ -107,14 +109,16 @@ async function callOpenAI(prompt) {
 /* ---------- Azure OpenAI ---------- */
 
 async function callAzureOpenAI(prompt) {
+  const credential = new DefaultAzureCredential();
+  const scope = "https://cognitiveservices.azure.com/.default";
+  const azureADTokenProvider = getBearerTokenProvider(credential, scope);
+  const token = await azureADTokenProvider();
+
   const client = new OpenAI({
-    apiKey: process.env.AZURE_OPENAI_API_KEY,
+    apiKey: token.token,
     baseURL: `${process.env.AZURE_OPENAI_ENDPOINT}/openai/deployments/${process.env.AZURE_OPENAI_DEPLOYMENT}`,
     defaultQuery: {
       "api-version": process.env.AZURE_OPENAI_API_VERSION,
-    },
-    defaultHeaders: {
-      "api-key": process.env.AZURE_OPENAI_API_KEY,
     },
   });
 
@@ -131,27 +135,80 @@ async function callAzureOpenAI(prompt) {
  * PROMPT + TEXT UTILITIES
  * ====================================================== */
 
-function buildPrompt({ placeholderName, marker, sentence, valueMap }) {
+function buildBatchPrompt({ placeholders, valueMap }) {
+  const valueMapText = formatValueMapForPrompt(valueMap);
   return `
 You are filling placeholders in a Word document with the best matching data.
 
-Placeholder name:
-${placeholderName}
+Placeholders:
+${placeholders
+  .map(
+    (ph, i) => `
+${i + 1}.
+- id: ${ph.id}
+- marker: ${ph.marker}
+- placeholder name: ${ph.raw}
+- sentence: "${ph.sentence}"
+`.trim()
+  )
+  .join("\n\n")}
 
-Placeholder marker in text:
-${marker}
+Available data:
+${valueMapText}
 
-Sentence from Word:
-"${sentence}"
-
-Available data fields (key : value preview):
-${Object.entries(valueMap)
-  .map(([k, v]) => `- ${k}: ${String(v).slice(0, 60)}`)
-  .join("\n")}
-
-Return ONLY the final replacement value for ${marker}.
-If nothing is appropriate, return an empty string.
+Return ONLY a valid JSON object mapping placeholder id to replacement string.
+Example:
+{"PH_1":"Acme Corp","PH_2":"2026-01-29"}
+If nothing is appropriate for a placeholder, use an empty string.
 `.trim();
+}
+
+function formatValueMapForPrompt(valueMap) {
+  if (typeof valueMap === "string") {
+    return valueMap.trim() || "(empty)";
+  }
+
+  if (!valueMap || typeof valueMap !== "object" || Array.isArray(valueMap)) {
+    return "(empty)";
+  }
+
+  const entries = Object.entries(valueMap);
+  if (!entries.length) return "(empty)";
+
+  return entries
+    .map(([k, v]) => `- ${k}: ${String(v).slice(0, 60)}`)
+    .join("\n");
+}
+
+function parseBatchResponse(text, placeholderContext) {
+  const json = extractFirstJsonObject(text);
+  const parsed = JSON.parse(json);
+
+  const resolved = {};
+  for (const ph of placeholderContext) {
+    const value = parsed[ph.id];
+    resolved[ph.id] = typeof value === "string" ? value : "";
+  }
+  return resolved;
+}
+
+function extractFirstJsonObject(text) {
+  const start = text.indexOf("{");
+  if (start === -1) {
+    throw new Error("LLM response did not contain JSON object.");
+  }
+
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "{") depth++;
+    if (ch === "}") depth--;
+    if (depth === 0) {
+      return text.slice(start, i + 1);
+    }
+  }
+
+  throw new Error("LLM response JSON object was incomplete.");
 }
 
 function stripXml(xml) {
