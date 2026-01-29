@@ -54,6 +54,7 @@ export async function generateDocxWithLLM(
       raw: ph.raw,
       marker,
       sentence: extractSentence(plainText, marker),
+      contextWindow: extractContextWindow(plainText, marker, 200),
     };
   });
 
@@ -115,15 +116,15 @@ async function callAzureOpenAI(prompt) {
   const token = await azureADTokenProvider();
 
   const client = new OpenAI({
-    apiKey: token.token,
-    baseURL: `${process.env.AZURE_OPENAI_ENDPOINT}/openai/deployments/${process.env.AZURE_OPENAI_DEPLOYMENT}`,
+    apiKey: token,
+    baseURL: `${process.env.AZURE_OPENAI_ENDPOINT}/openai/deployments/${process.env.AZURE_OPENAI_DEPLOYMENT_NAME}`,
     defaultQuery: {
       "api-version": process.env.AZURE_OPENAI_API_VERSION,
     },
   });
 
   const res = await client.chat.completions.create({
-    model: process.env.AZURE_OPENAI_DEPLOYMENT,
+    model: process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
     messages: [{ role: "user", content: prompt }],
     temperature: 0,
   });
@@ -149,6 +150,7 @@ ${i + 1}.
 - marker: ${ph.marker}
 - placeholder name: ${ph.raw}
 - sentence: "${ph.sentence}"
+- nearby context: "${ph.contextWindow}"
 `.trim()
   )
   .join("\n\n")}
@@ -156,10 +158,16 @@ ${i + 1}.
 Available data:
 ${valueMapText}
 
+Instructions:
+- Resolve each placeholder independently using its sentence and nearby context.
+- Prefer exact matches found in Available data.
+- Do not infer from other placeholders.
+- If the placeholder looks like a date field, search Available data for a date and return it as-is.
+- If nothing is appropriate, return an empty string.
+
 Return ONLY a valid JSON object mapping placeholder id to replacement string.
 Example:
 {"PH_1":"Acme Corp","PH_2":"2026-01-29"}
-If nothing is appropriate for a placeholder, use an empty string.
 `.trim();
 }
 
@@ -231,4 +239,13 @@ function extractSentence(text, marker) {
   const end = ends.length ? Math.min(...ends) + 1 : text.length;
 
   return text.slice(start, end).trim();
+}
+
+function extractContextWindow(text, marker, windowSize = 200) {
+  const idx = text.indexOf(marker);
+  if (idx === -1) return "";
+
+  const start = Math.max(0, idx - windowSize);
+  const end = Math.min(text.length, idx + marker.length + windowSize);
+  return text.slice(start, end).replace(/\s+/g, " ").trim();
 }
